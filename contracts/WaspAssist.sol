@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.6.12;
+pragma solidity 0.8.9;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
-
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 interface WaspHive {
     function poolLength() external view returns (uint256);
@@ -21,23 +21,30 @@ interface WaspFarm {
     function pendingWasp(uint256 _pid, address _user) external view returns (uint256);
 }
 
-contract WaspAssist is Ownable {
-    using SafeMath for uint256;
-
+contract WaspAssist is Initializable, AccessControlUpgradeable {
     address public waspToken;
     address public waspHive;
     address public waspPair;
     address public waspFarm;
+    address public zooFarm;
+
+    function balanceOf(address user) external view returns (uint256) {
+        return getTotalWasp(user);
+    }
+
+    function initialize() initializer public {
+        __AccessControl_init();
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    }
 
     function getHiveWasp(address user) public view returns (uint) {
         uint totalStake = 0;
         uint poolLength = WaspHive(waspHive).poolLength();
         uint i;
         uint amount;
-        uint pending;
         for (i=0; i<poolLength; i++) {
             (amount,) = WaspHive(waspHive).pendingwanWan(i, user);
-            totalStake = totalStake.add(amount);
+            totalStake += (amount);
         }
         return totalStake;
     }
@@ -51,23 +58,49 @@ contract WaspAssist is Ownable {
         uint lpTotal = IERC20(waspPair).totalSupply();
         uint reserve0;
         (reserve0, , ) = WanswapPair(waspPair).getReserves();
-        totalStake = totalStake.add(lpBalance.mul(reserve0).div(lpTotal));
+        totalStake += (lpBalance * reserve0 / lpTotal);
         return totalStake;
     }
-
-    function getFarmingWasp(address user) public view returns (uint) {
+    // 6, 16, 19, 23
+    function getFarmingWasp(address user, uint256 _pid, bool isReserve0) public view returns (uint) {
         uint totalStake;
         uint amount;
-        (amount,) = WaspFarm(waspFarm).userInfo(6, user);
+        (amount,) = WaspFarm(waspFarm).userInfo(_pid, user);
         if (amount > 0) {
             uint lpBalance = amount;
             uint lpTotal = IERC20(waspPair).totalSupply();
             uint reserve0;
-            (reserve0, , ) = WanswapPair(waspPair).getReserves();
-            totalStake = totalStake.add(lpBalance.mul(reserve0).div(lpTotal));
+            uint reserve1;
+            (reserve0, reserve1, ) = WanswapPair(waspPair).getReserves();
+            if (isReserve0) {
+                totalStake += (lpBalance * reserve0 / lpTotal);
+            } else {
+                totalStake += (lpBalance * reserve1 / lpTotal);
+            }
         }
-        uint pending = WaspFarm(waspFarm).pendingWasp(6, user);
-        totalStake = totalStake.add(pending);
+        uint pending = WaspFarm(waspFarm).pendingWasp(_pid, user);
+        totalStake += (pending);
+        return totalStake;
+    }
+
+    function getZooKeeperFarmingWasp(address user, uint256 _pid, bool isReserve0) public view returns (uint) {
+        uint totalStake;
+        uint amount;
+        (amount,) = WaspFarm(zooFarm).userInfo(_pid, user);
+        if (amount > 0) {
+            uint lpBalance = amount;
+            uint lpTotal = IERC20(waspPair).totalSupply();
+            uint reserve0;
+            uint reserve1;
+            (reserve0, reserve1, ) = WanswapPair(waspPair).getReserves();
+            if (isReserve0) {
+                totalStake += (lpBalance * reserve0 / lpTotal);
+            } else {
+                totalStake += (lpBalance * reserve1 / lpTotal);
+            }
+        }
+        uint pending = WaspFarm(zooFarm).pendingWasp(_pid, user);
+        totalStake += (pending);
         return totalStake;
     }
 
@@ -75,24 +108,32 @@ contract WaspAssist is Ownable {
         uint totalStake = 0;
 
         // BALANCE
-        totalStake = totalStake.add(IERC20(waspToken).balanceOf(user));
+        totalStake += (IERC20(waspToken).balanceOf(user));
 
         // HIVE
-        totalStake = totalStake.add(getHiveWasp(user));
+        totalStake += (getHiveWasp(user));
 
         // POOL
-        totalStake = totalStake.add(getPoolWasp(user));
+        // totalStake += (getPoolWasp(user));
 
         // FARMING
-        totalStake = totalStake.add(getFarmingWasp(user));
+        totalStake += (getFarmingWasp(user, 6, true));
+        totalStake += (getFarmingWasp(user, 16, false));
+        totalStake += (getFarmingWasp(user, 19, false));
+        totalStake += (getFarmingWasp(user, 23, false));
+
+        // ZOO
+        totalStake += (getZooKeeperFarmingWasp(user, 0, true));
+        totalStake += (getZooKeeperFarmingWasp(user, 7, false));
 
         return totalStake;
     }
 
-    function config(address _waspToken, address _waspHive, address _waspPair, address _waspFarm) public onlyOwner {
+    function config(address _waspToken, address _waspHive, address _waspPair, address _waspFarm, address _zooFarm) public onlyRole(DEFAULT_ADMIN_ROLE) {
         waspToken = _waspToken;
         waspHive = _waspHive;
         waspPair = _waspPair;
         waspFarm = _waspFarm;
+        zooFarm = _zooFarm;
     }
 }
